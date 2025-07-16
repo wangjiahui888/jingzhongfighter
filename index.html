@@ -1,0 +1,1130 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>雷霆战机小游戏</title>
+    <style>
+        body { margin: 0; background: #000; }
+        canvas { display: block; margin: 0 auto; background: #222; }
+        #score { color: #fff; text-align: center; font-size: 24px; margin-top: 10px; }
+    </style>
+</head>
+<body>
+    <div id="score">分数: 0</div>
+    <canvas id="gameCanvas" width="400" height="600"></canvas>
+    <button id="restartBtn" style="display:none;position:fixed;left:50%;top:55%;transform:translate(-50%,-50%);z-index:20;font-size:22px;padding:12px 36px;border-radius:8px;background:#0ff;color:#222;border:none;box-shadow:0 0 16px #0ff;cursor:pointer;">重新开始</button>
+    <audio id="bgm" src="bgm.mp3" loop></audio>
+    <audio id="hitSound" src="hit.mp3"></audio>
+    <button id="muteBtn" style="position:fixed;right:24px;top:24px;z-index:30;font-size:16px;padding:6px 16px;border-radius:6px;background:#222;color:#fff;border:1px solid #0ff;">🔊</button>
+    <div id="planeSelect" style="position:fixed;left:0;top:0;width:100vw;height:100vh;background:rgba(0,0,0,0.85);z-index:10;display:flex;flex-direction:column;align-items:center;justify-content:center;">
+        <h2 style='color:#fff;'>选择你的战机</h2>
+        <div style="display:flex;gap:40px;">
+            <div class="plane-option" data-type="balance" style="cursor:pointer;text-align:center;">
+                <canvas id="planeBalance" width="60" height="90"></canvas><br>
+                <span style='color:#0ff;'>均衡型</span><br>
+                <span style='color:#fff;font-size:12px;'>均衡属性</span>
+            </div>
+            <div class="plane-option" data-type="speed" style="cursor:pointer;text-align:center;">
+                <canvas id="planeSpeed" width="60" height="90"></canvas><br>
+                <span style='color:#ff0;'>速度型</span><br>
+                <span style='color:#fff;font-size:12px;'>移动快，火力一般</span>
+            </div>
+            <div class="plane-option" data-type="power" style="cursor:pointer;text-align:center;">
+                <canvas id="planePower" width="60" height="90"></canvas><br>
+                <span style='color:#f66;'>火力型</span><br>
+                <span style='color:#fff;font-size:12px;'>火力强，移动慢</span>
+            </div>
+        </div>
+    </div>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const scoreDiv = document.getElementById('score');
+
+        // 星空背景数据
+        const STAR_NUM = 80;
+        let stars = [];
+        function initStars() {
+            stars = [];
+            for (let i = 0; i < STAR_NUM; i++) {
+                stars.push({
+                    x: Math.random() * canvas.width,
+                    y: Math.random() * canvas.height,
+                    r: Math.random() * 1.5 + 0.5,
+                    speed: Math.random() * 0.5 + 0.2,
+                    alpha: Math.random() * 0.5 + 0.5,
+                    twinkle: Math.random() * 0.05 + 0.01
+                });
+            }
+        }
+        initStars();
+        function drawStars() {
+            ctx.save();
+            ctx.globalAlpha = 1;
+            ctx.fillStyle = '#000';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            stars.forEach(star => {
+                ctx.save();
+                ctx.globalAlpha = star.alpha;
+                ctx.beginPath();
+                ctx.arc(star.x, star.y, star.r, 0, 2 * Math.PI);
+                ctx.fillStyle = '#fff';
+                ctx.shadowColor = '#fff';
+                ctx.shadowBlur = 8;
+                ctx.fill();
+                ctx.restore();
+                // 星星移动和闪烁
+                star.y += star.speed;
+                if (star.y > canvas.height) {
+                    star.y = 0;
+                    star.x = Math.random() * canvas.width;
+                }
+                star.alpha += (Math.random() - 0.5) * star.twinkle;
+                if (star.alpha > 1) star.alpha = 1;
+                if (star.alpha < 0.2) star.alpha = 0.2;
+            });
+            ctx.restore();
+        }
+
+        // 玩家飞机
+        const player = {
+            x: canvas.width / 2 - 20,
+            y: canvas.height - 60,
+            width: 40,
+            height: 60,
+            speed: 5,
+            level: 1, // 1-5级
+            type: 'balance',
+            bulletColor: '#fff'
+        };
+
+        // 子弹
+        let bullets = [];
+        // 敌机
+        let enemies = [];
+        // 分数
+        let score = 0;
+        // 游戏状态
+        let gameOver = false;
+
+        // 选择飞机逻辑
+        let gameStarted = false;
+        // 关卡相关
+        let level = 1;
+        let levelUpScore = [0, 200, 500, 900, 1400, 2000, 2700, 3500, 4400, 5400]; // 每关分数线
+        let showLevelTip = false;
+        let levelTipTimer = 0;
+        function showLevel(levelNum) {
+            showLevelTip = true;
+            levelTipTimer = 60; // 显示60帧
+        }
+        // 敌人贴图加载（4个自定义）
+        const enemyImages = [
+            (() => { let img = new Image(); img.src = 'enemy1.png'; return img; })(),
+            (() => { let img = new Image(); img.src = 'enemy2.png'; return img; })(),
+            (() => { let img = new Image(); img.src = 'enemy3.png'; return img; })(),
+            (() => { let img = new Image(); img.src = 'enemy4.png'; return img; })()
+        ];
+        document.querySelectorAll('.plane-option').forEach(opt => {
+            opt.onclick = function() {
+                const t = this.getAttribute('data-type');
+                player.type = t;
+                player.speed = planeTypes[t].speed;
+                player.bulletColor = planeTypes[t].bulletColor;
+                document.getElementById('planeSelect').style.display = 'none';
+                gameStarted = true;
+                gameOver = false;
+                // 用户交互后主动播放BGM
+                if (bgm.paused) {
+                    bgm.currentTime = 0;
+                    bgm.play().catch(()=>{});
+                }
+                // 进入第一关
+                level = 1;
+                showLevel(level);
+                loop();
+            }
+        });
+
+        // 重新开始按钮和BGM控制
+        const restartBtn = document.getElementById('restartBtn');
+        const bgm = document.getElementById('bgm');
+        const muteBtn = document.getElementById('muteBtn');
+        const hitSound = document.getElementById('hitSound');
+        muteBtn.onclick = function() {
+            if (bgm.muted) {
+                bgm.muted = false;
+                muteBtn.textContent = '🔊';
+            } else {
+                bgm.muted = true;
+                muteBtn.textContent = '🔇';
+            }
+        }
+        restartBtn.onclick = function() {
+            // 重置所有游戏状态
+            player.x = canvas.width / 2 - 20;
+            player.y = canvas.height - 60;
+            player.level = 1;
+            score = 0;
+            bullets = [];
+            enemies = [];
+            gameOver = false;
+            gameStarted = false;
+            restartBtn.style.display = 'none';
+            initStars();
+            // 重新开始时回到第一关
+            level = 1;
+            showLevel(level);
+            if (bgm.paused) {
+                bgm.currentTime = 0;
+                bgm.play().catch(()=>{});
+            }
+            // 显示飞机选择界面
+            document.getElementById('planeSelect').style.display = 'flex';
+        }
+
+        // 监听键盘
+        let leftPressed = false;
+        let rightPressed = false;
+        let spacePressed = false;
+        document.addEventListener('keydown', e => {
+            if (e.code === 'ArrowLeft' || e.key === 'a' || e.key === 'A') leftPressed = true;
+            if (e.code === 'ArrowRight' || e.key === 'd' || e.key === 'D') rightPressed = true;
+            if (e.code === 'Space') spacePressed = true;
+        });
+        document.addEventListener('keyup', e => {
+            if (e.code === 'ArrowLeft' || e.key === 'a' || e.key === 'A') leftPressed = false;
+            if (e.code === 'ArrowRight' || e.key === 'd' || e.key === 'D') rightPressed = false;
+            if (e.code === 'Space') spacePressed = false;
+        });
+
+        // 发射子弹冷却
+        let bulletCooldown = 0;
+
+        // 升级为五级，分数判定
+        function getLevelByScore(score) {
+            if (score >= 1000) return 5;
+            if (score >= 600) return 4;
+            if (score >= 300) return 3;
+            if (score >= 100) return 2;
+            return 1;
+        }
+
+        function drawPlayer() {
+            // 根据类型和等级绘制不同外观
+            const t = player.type;
+            if (t && planeTypes[t]) {
+                planeTypes[t].draw(ctx, player.x, player.y, player.width, player.height, player.level);
+            } else {
+                ctx.fillStyle = '#0ff';
+                ctx.beginPath();
+                ctx.moveTo(player.x + player.width / 2, player.y);
+                ctx.lineTo(player.x, player.y + player.height);
+                ctx.lineTo(player.x + player.width, player.y + player.height);
+                ctx.closePath();
+                ctx.fill();
+            }
+        }
+
+        function drawBullets() {
+            bullets.forEach(bullet => {
+                ctx.save();
+                ctx.fillStyle = bullet.color || player.bulletColor || '#ff0';
+                if (bullet.glow) {
+                    ctx.shadowColor = bullet.color || '#0ff';
+                    ctx.shadowBlur = 18;
+                } else {
+                    ctx.shadowColor = player.bulletColor || '#ff0';
+                    ctx.shadowBlur = 10;
+                }
+                ctx.fillRect(bullet.x, bullet.y, bullet.width, bullet.height);
+                ctx.restore();
+            });
+        }
+
+        function drawEnemies() {
+            enemies.forEach(enemy => {
+                if (enemy.isBoss) {
+                    // Boss发光描边
+                    ctx.save();
+                    ctx.shadowColor = '#ff0';
+                    ctx.shadowBlur = 32;
+                    if (enemy.img && enemy.img.complete && enemy.img.naturalWidth > 0) {
+                        ctx.drawImage(enemy.img, enemy.x, enemy.y, enemy.width, enemy.height);
+                    } else {
+                        ctx.fillStyle = '#f00';
+                        ctx.fillRect(enemy.x, enemy.y, enemy.width, enemy.height);
+                    }
+                    ctx.restore();
+                    // Boss描边
+                    ctx.save();
+                    ctx.strokeStyle = '#ff0';
+                    ctx.lineWidth = 6;
+                    ctx.globalAlpha = 0.7;
+                    ctx.strokeRect(enemy.x, enemy.y, enemy.width, enemy.height);
+                    ctx.restore();
+                } else {
+                    if (enemy.img && enemy.img.complete && enemy.img.naturalWidth > 0) {
+                        ctx.drawImage(enemy.img, enemy.x, enemy.y, enemy.width, enemy.height);
+                    } else {
+                        ctx.fillStyle = '#f00';
+                        ctx.fillRect(enemy.x, enemy.y, enemy.width, enemy.height);
+                    }
+                }
+            });
+        }
+
+        function update() {
+            if (!gameStarted) return;
+            if (gameOver) return;
+            // 升级判定（五级）
+            player.level = getLevelByScore(score);
+            // 关卡判定
+            if (level < levelUpScore.length && score >= levelUpScore[level]) {
+                level++;
+                showLevel(level);
+                // 关卡切换时尝试播放BGM
+                if (bgm.paused) {
+                    bgm.currentTime = 0;
+                    bgm.play().catch(()=>{});
+                }
+            }
+
+            // 玩家移动
+            if (leftPressed && player.x > 0) player.x -= player.speed;
+            if (rightPressed && player.x < canvas.width - player.width) player.x += player.speed;
+
+            // 发射子弹
+            if (spacePressed && bulletCooldown <= 0) {
+                if (player.level === 1) {
+                    // 单发
+                    bullets.push({
+                        x: player.x + player.width / 2 - 2,
+                        y: player.y,
+                        width: 4,
+                        height: 10,
+                        speed: 8
+                    });
+                } else if (player.level === 2) {
+                    // 双发
+                    bullets.push({
+                        x: player.x + player.width / 2 - 12,
+                        y: player.y + 10,
+                        width: 4,
+                        height: 10,
+                        speed: 8
+                    });
+                    bullets.push({
+                        x: player.x + player.width / 2 + 8,
+                        y: player.y + 10,
+                        width: 4,
+                        height: 10,
+                        speed: 8
+                    });
+                } else if (player.level === 3) {
+                    // 三发
+                    bullets.push({
+                        x: player.x + player.width / 2 - 2,
+                        y: player.y,
+                        width: 4,
+                        height: 14,
+                        speed: 10
+                    });
+                    bullets.push({
+                        x: player.x + player.width / 2 - 16,
+                        y: player.y + 12,
+                        width: 4,
+                        height: 10,
+                        speed: 8
+                    });
+                    bullets.push({
+                        x: player.x + player.width / 2 + 12,
+                        y: player.y + 12,
+                        width: 4,
+                        height: 10,
+                        speed: 8
+                    });
+                } else if (player.level === 4) {
+                    // 四发+中间激光
+                    bullets.push({
+                        x: player.x + player.width / 2 - 2,
+                        y: player.y,
+                        width: 4,
+                        height: 18,
+                        speed: 12,
+                        color: '#0ff',
+                        glow: true
+                    });
+                    bullets.push({
+                        x: player.x + player.width / 2 - 18,
+                        y: player.y + 12,
+                        width: 4,
+                        height: 12,
+                        speed: 9,
+                        color: '#fff',
+                        glow: true
+                    });
+                    bullets.push({
+                        x: player.x + player.width / 2 + 14,
+                        y: player.y + 12,
+                        width: 4,
+                        height: 12,
+                        speed: 9,
+                        color: '#fff',
+                        glow: true
+                    });
+                    bullets.push({
+                        x: player.x + player.width / 2 - 2,
+                        y: player.y + 8,
+                        width: 2,
+                        height: 24,
+                        speed: 14,
+                        color: '#0ff',
+                        glow: true
+                    });
+                } else if (player.level === 5) {
+                    // 五发+双激光+大能量弹
+                    bullets.push({
+                        x: player.x + player.width / 2 - 2,
+                        y: player.y,
+                        width: 6,
+                        height: 22,
+                        speed: 15,
+                        color: '#fff',
+                        glow: true
+                    });
+                    bullets.push({
+                        x: player.x + player.width / 2 - 22,
+                        y: player.y + 14,
+                        width: 4,
+                        height: 14,
+                        speed: 10,
+                        color: '#0ff',
+                        glow: true
+                    });
+                    bullets.push({
+                        x: player.x + player.width / 2 + 18,
+                        y: player.y + 14,
+                        width: 4,
+                        height: 14,
+                        speed: 10,
+                        color: '#0ff',
+                        glow: true
+                    });
+                    // 双激光
+                    bullets.push({
+                        x: player.x + player.width / 2 - 10,
+                        y: player.y,
+                        width: 2,
+                        height: 32,
+                        speed: 16,
+                        color: '#0ff',
+                        glow: true
+                    });
+                    bullets.push({
+                        x: player.x + player.width / 2 + 8,
+                        y: player.y,
+                        width: 2,
+                        height: 32,
+                        speed: 16,
+                        color: '#0ff',
+                        glow: true
+                    });
+                }
+                bulletCooldown = 10;
+            }
+            if (bulletCooldown > 0) bulletCooldown--;
+
+            // 更新子弹
+            bullets.forEach(bullet => bullet.y -= bullet.speed);
+            bullets = bullets.filter(bullet => bullet.y + bullet.height > 0);
+
+            // 生成敌机，随关卡提升概率和速度提升
+            let enemyRate = 0.02 + level * 0.008;
+            if (Math.random() < enemyRate) {
+                // 随机选择一张敌人图片
+                const imgIdx = Math.floor(Math.random() * enemyImages.length);
+                enemies.push({
+                    x: Math.random() * (canvas.width - 40),
+                    y: -40,
+                    width: 40,
+                    height: 40,
+                    speed: 2 + Math.random() * (1.2 + level * 0.3),
+                    img: enemyImages[imgIdx],
+                    isBoss: false
+                });
+            }
+            // 偶尔生成Boss敌人（0.2%概率）
+            if (Math.random() < 0.002) {
+                const imgIdx = Math.floor(Math.random() * enemyImages.length);
+                const bossW = 100, bossH = 100;
+                enemies.push({
+                    x: Math.random() * (canvas.width - bossW),
+                    y: -bossH,
+                    width: bossW,
+                    height: bossH,
+                    speed: 2 + Math.random() * (1.2 + level * 0.2),
+                    img: enemyImages[imgIdx],
+                    isBoss: true
+                });
+            }
+            // 更新敌机
+            enemies.forEach(enemy => enemy.y += enemy.speed);
+            enemies = enemies.filter(enemy => enemy.y < canvas.height);
+
+            // 碰撞检测
+            bullets.forEach((bullet, bIdx) => {
+                enemies.forEach((enemy, eIdx) => {
+                    if (
+                        bullet.x < enemy.x + enemy.width &&
+                        bullet.x + bullet.width > enemy.x &&
+                        bullet.y < enemy.y + enemy.height &&
+                        bullet.y + bullet.height > enemy.y
+                    ) {
+                        // 子弹击中敌机
+                        bullets.splice(bIdx, 1);
+                        enemies.splice(eIdx, 1);
+                        score += 10;
+                        // 播放击中音效
+                        if (hitSound) {
+                            hitSound.currentTime = 0;
+                            hitSound.play().catch(()=>{});
+                        }
+                    }
+                });
+            });
+
+            // 玩家与敌机碰撞
+            enemies.forEach(enemy => {
+                if (
+                    player.x < enemy.x + enemy.width &&
+                    player.x + player.width > enemy.x &&
+                    player.y < enemy.y + enemy.height &&
+                    player.y + player.height > enemy.y
+                ) {
+                    gameOver = true;
+                }
+            });
+        }
+
+        function draw() {
+            drawStars();
+            drawPlayer();
+            drawBullets();
+            drawEnemies();
+            // 关卡提示
+            if (showLevelTip && levelTipTimer > 0) {
+                ctx.save();
+                ctx.globalAlpha = 0.9;
+                ctx.fillStyle = '#0ff';
+                ctx.font = 'bold 40px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText('第 ' + level + ' 关', canvas.width / 2, canvas.height / 2 - 60);
+                ctx.restore();
+                levelTipTimer--;
+                if (levelTipTimer === 0) showLevelTip = false;
+            }
+            if (gameOver) {
+                ctx.fillStyle = '#fff';
+                ctx.font = '36px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText('游戏结束', canvas.width / 2, canvas.height / 2);
+                restartBtn.style.display = 'block';
+            } else {
+                restartBtn.style.display = 'none';
+            }
+        }
+
+        function loop() {
+            update();
+            draw();
+            scoreDiv.textContent = '分数: ' + score;
+            if (!gameOver) requestAnimationFrame(loop);
+        }
+
+        // 飞机类型数据（五级特效）
+        const planeTypes = {
+            balance: {
+                name: '均衡型', color: '#0ff', speed: 5, bulletColor: '#fff',
+                draw: function(ctx, x, y, w, h, level) {
+                    let t = Date.now()/300;
+                    if (level === 1) {
+                        // 渐变蓝色机身+白色中线
+                        let grad = ctx.createLinearGradient(x, y, x + w, y + h);
+                        grad.addColorStop(0, '#0ff'); grad.addColorStop(1, '#08f');
+                        ctx.fillStyle = grad;
+                        ctx.beginPath();
+                        ctx.moveTo(x + w/2, y);
+                        ctx.lineTo(x, y + h);
+                        ctx.lineTo(x + w, y + h);
+                        ctx.closePath(); ctx.fill();
+                        ctx.strokeStyle = '#fff'; ctx.lineWidth = 2;
+                        ctx.beginPath(); ctx.moveTo(x + w/2, y); ctx.lineTo(x + w/2, y + h); ctx.stroke();
+                    } else if (level === 2) {
+                        // 机身+能量环+小光翼
+                        let grad = ctx.createLinearGradient(x, y, x + w, y + h);
+                        grad.addColorStop(0, '#0ff'); grad.addColorStop(1, '#a0f');
+                        ctx.fillStyle = grad;
+                        ctx.beginPath();
+                        ctx.moveTo(x + w/2, y);
+                        ctx.lineTo(x - 10, y + h);
+                        ctx.lineTo(x + w + 10, y + h);
+                        ctx.closePath(); ctx.fill();
+                        // 能量环
+                        ctx.save();
+                        ctx.globalAlpha = 0.5;
+                        ctx.strokeStyle = '#fff';
+                        ctx.lineWidth = 4;
+                        ctx.beginPath();
+                        ctx.arc(x + w/2, y + h*0.7, w*0.6, 0, 2*Math.PI);
+                        ctx.stroke();
+                        ctx.restore();
+                        // 小光翼
+                        ctx.save();
+                        ctx.globalAlpha = 0.5;
+                        ctx.strokeStyle = '#fff';
+                        ctx.lineWidth = 8;
+                        ctx.beginPath();
+                        ctx.moveTo(x + w/2, y + h*0.5);
+                        ctx.lineTo(x - 24, y + h);
+                        ctx.moveTo(x + w/2, y + h*0.5);
+                        ctx.lineTo(x + w + 24, y + h);
+                        ctx.stroke();
+                        ctx.restore();
+                    } else if (level === 3) {
+                        // 机身+粒子环+能量爆发+光翼
+                        let grad = ctx.createLinearGradient(x, y, x + w, y + h);
+                        grad.addColorStop(0, '#fff'); grad.addColorStop(1, '#0ff');
+                        ctx.fillStyle = grad;
+                        ctx.beginPath();
+                        ctx.moveTo(x + w/2, y - 10);
+                        ctx.lineTo(x - 15, y + h);
+                        ctx.lineTo(x + w + 15, y + h);
+                        ctx.closePath(); ctx.fill();
+                        // 粒子环
+                        for(let i=0;i<10;i++){
+                            let angle = Math.PI*2*i/10 + t;
+                            let px = x + w/2 + Math.cos(angle)*w*0.8;
+                            let py = y + h*0.6 + Math.sin(angle)*w*0.8;
+                            ctx.save();
+                            ctx.globalAlpha = 0.7;
+                            ctx.fillStyle = '#fff';
+                            ctx.beginPath();
+                            ctx.arc(px, py, 4+2*Math.sin(t+i), 0, 2*Math.PI);
+                            ctx.fill();
+                            ctx.restore();
+                        }
+                        // 能量爆发
+                        ctx.save();
+                        ctx.globalAlpha = 0.3+0.2*Math.abs(Math.sin(t));
+                        ctx.fillStyle = '#0ff';
+                        ctx.beginPath();
+                        ctx.arc(x + w/2, y + h*0.7, w*0.7 + 10*Math.abs(Math.sin(t)), 0, 2*Math.PI);
+                        ctx.fill();
+                        ctx.restore();
+                        // 光翼
+                        ctx.save();
+                        ctx.globalAlpha = 0.7;
+                        ctx.strokeStyle = '#fff';
+                        ctx.lineWidth = 12;
+                        ctx.beginPath();
+                        ctx.moveTo(x + w/2, y + h*0.4);
+                        ctx.lineTo(x - 32, y + h);
+                        ctx.moveTo(x + w/2, y + h*0.4);
+                        ctx.lineTo(x + w + 32, y + h);
+                        ctx.stroke();
+                        ctx.restore();
+                    } else if (level === 4) {
+                        // 机身+大光翼+爆炸环+闪电
+                        let grad = ctx.createLinearGradient(x, y, x + w, y + h);
+                        grad.addColorStop(0, '#fff'); grad.addColorStop(1, '#0ff');
+                        ctx.fillStyle = grad;
+                        ctx.beginPath();
+                        ctx.moveTo(x + w/2, y - 16);
+                        ctx.lineTo(x - 22, y + h);
+                        ctx.lineTo(x + w + 22, y + h);
+                        ctx.closePath(); ctx.fill();
+                        // 大光翼
+                        ctx.save();
+                        ctx.globalAlpha = 0.5+0.2*Math.abs(Math.sin(t));
+                        ctx.strokeStyle = '#0ff';
+                        ctx.lineWidth = 24;
+                        ctx.beginPath();
+                        ctx.moveTo(x + w/2, y + h*0.3);
+                        ctx.lineTo(x - 60, y + h + 20*Math.sin(t));
+                        ctx.moveTo(x + w/2, y + h*0.3);
+                        ctx.lineTo(x + w + 60, y + h + 20*Math.sin(t));
+                        ctx.stroke();
+                        ctx.restore();
+                        // 爆炸环
+                        ctx.save();
+                        ctx.globalAlpha = 0.3+0.2*Math.abs(Math.sin(t));
+                        ctx.strokeStyle = '#fff';
+                        ctx.lineWidth = 8;
+                        ctx.beginPath();
+                        ctx.arc(x + w/2, y + h*0.7, w*0.9 + 12*Math.abs(Math.sin(t)), 0, 2*Math.PI);
+                        ctx.stroke();
+                        ctx.restore();
+                        // 闪电
+                        ctx.save();
+                        ctx.globalAlpha = 0.7;
+                        ctx.strokeStyle = '#fff';
+                        ctx.lineWidth = 3;
+                        for(let i=0;i<2;i++){
+                            let baseX = i===0 ? x-10 : x+w+10;
+                            ctx.beginPath();
+                            ctx.moveTo(x + w/2, y + h*0.5);
+                            for(let j=0;j<5;j++){
+                                let dx = baseX + (Math.random()-0.5)*10;
+                                let dy = y + h*0.5 + (j+1)*(h*0.1);
+                                ctx.lineTo(dx, dy);
+                            }
+                            ctx.stroke();
+                        }
+                        ctx.restore();
+                    } else if (level === 5) {
+                        // 机身+超大光翼+多重能量环+粒子爆发+光束
+                        let grad = ctx.createLinearGradient(x, y, x + w, y + h);
+                        grad.addColorStop(0, '#fff'); grad.addColorStop(1, '#0ff');
+                        ctx.fillStyle = grad;
+                        ctx.beginPath();
+                        ctx.moveTo(x + w/2, y - 24);
+                        ctx.lineTo(x - 36, y + h);
+                        ctx.lineTo(x + w + 36, y + h);
+                        ctx.closePath(); ctx.fill();
+                        // 超大光翼
+                        ctx.save();
+                        ctx.globalAlpha = 0.4+0.3*Math.abs(Math.sin(t));
+                        ctx.strokeStyle = '#0ff';
+                        ctx.lineWidth = 40;
+                        ctx.beginPath();
+                        ctx.moveTo(x + w/2, y + h*0.2);
+                        ctx.lineTo(x - 120, y + h + 60*Math.sin(t));
+                        ctx.moveTo(x + w/2, y + h*0.2);
+                        ctx.lineTo(x + w + 120, y + h + 60*Math.sin(t));
+                        ctx.stroke();
+                        ctx.restore();
+                        // 多重能量环
+                        for(let k=0;k<3;k++){
+                            ctx.save();
+                            ctx.globalAlpha = 0.2+0.2*k;
+                            ctx.strokeStyle = '#fff';
+                            ctx.lineWidth = 10-2*k;
+                            ctx.beginPath();
+                            ctx.arc(x + w/2, y + h*0.7, w*1.1 + 18*k*Math.abs(Math.sin(t)), 0, 2*Math.PI);
+                            ctx.stroke();
+                            ctx.restore();
+                        }
+                        // 粒子爆发
+                        for(let i=0;i<18;i++){
+                            let angle = Math.PI*2*i/18 + t;
+                            let px = x + w/2 + Math.cos(angle)*(w*1.2+20*Math.abs(Math.sin(t)));
+                            let py = y + h*0.7 + Math.sin(angle)*(w*1.2+20*Math.abs(Math.sin(t)));
+                            ctx.save();
+                            ctx.globalAlpha = 0.7;
+                            ctx.fillStyle = '#fff';
+                            ctx.beginPath();
+                            ctx.arc(px, py, 6+2*Math.sin(t+i), 0, 2*Math.PI);
+                            ctx.fill();
+                            ctx.restore();
+                        }
+                        // 光束
+                        ctx.save();
+                        ctx.globalAlpha = 0.5;
+                        ctx.strokeStyle = '#0ff';
+                        ctx.lineWidth = 12;
+                        ctx.beginPath();
+                        ctx.moveTo(x + w/2, y + h);
+                        ctx.lineTo(x + w/2, y + h + 80 + 40*Math.abs(Math.sin(t)));
+                        ctx.stroke();
+                        ctx.restore();
+                    }
+                }
+            },
+            speed: {
+                name: '速度型', color: '#ff0', speed: 8, bulletColor: '#0f0',
+                draw: function(ctx, x, y, w, h, level) {
+                    let t = Date.now()/200;
+                    if (level === 1) {
+                        // 黄色机身+绿色尾焰
+                        let grad = ctx.createLinearGradient(x, y, x + w, y + h);
+                        grad.addColorStop(0, '#ff0'); grad.addColorStop(1, '#fa0');
+                        ctx.fillStyle = grad;
+                        ctx.beginPath();
+                        ctx.moveTo(x + w/2, y-8);
+                        ctx.lineTo(x-8, y + h);
+                        ctx.lineTo(x + w+8, y + h);
+                        ctx.closePath(); ctx.fill();
+                        // 尾焰
+                        ctx.fillStyle = '#0f0';
+                        ctx.beginPath();
+                        ctx.moveTo(x + w/2, y + h);
+                        ctx.lineTo(x + w/2 - 8, y + h + 18);
+                        ctx.lineTo(x + w/2 + 8, y + h + 18);
+                        ctx.closePath(); ctx.fill();
+                    } else if (level === 2) {
+                        // 机身+流线光带+双尾焰
+                        let grad = ctx.createLinearGradient(x, y, x + w, y + h);
+                        grad.addColorStop(0, '#ff0'); grad.addColorStop(1, '#0f0');
+                        ctx.fillStyle = grad;
+                        ctx.beginPath();
+                        ctx.moveTo(x + w/2, y-10);
+                        ctx.lineTo(x-12, y + h);
+                        ctx.lineTo(x + w+12, y + h);
+                        ctx.closePath(); ctx.fill();
+                        // 流线光带
+                        ctx.save();
+                        ctx.globalAlpha = 0.5;
+                        ctx.strokeStyle = '#0f0';
+                        ctx.lineWidth = 4;
+                        ctx.beginPath();
+                        ctx.moveTo(x + w/2, y);
+                        ctx.bezierCurveTo(x + w/2 - 20, y + h*0.5, x + w/2 + 20, y + h*0.7, x + w/2, y + h);
+                        ctx.stroke();
+                        ctx.restore();
+                        // 双尾焰
+                        ctx.fillStyle = '#0f0';
+                        ctx.beginPath();
+                        ctx.moveTo(x + 10, y + h);
+                        ctx.lineTo(x, y + h + 18);
+                        ctx.lineTo(x + 20, y + h + 10);
+                        ctx.closePath(); ctx.fill();
+                        ctx.beginPath();
+                        ctx.moveTo(x + w - 10, y + h);
+                        ctx.lineTo(x + w, y + h + 18);
+                        ctx.lineTo(x + w - 20, y + h + 10);
+                        ctx.closePath(); ctx.fill();
+                    } else if (level === 3) {
+                        // 机身+流星尾+旋转推进器
+                        let grad = ctx.createLinearGradient(x, y, x + w, y + h);
+                        grad.addColorStop(0, '#fff'); grad.addColorStop(1, '#0f0');
+                        ctx.fillStyle = grad;
+                        ctx.beginPath();
+                        ctx.moveTo(x + w/2, y-16);
+                        ctx.lineTo(x-16, y + h);
+                        ctx.lineTo(x + w+16, y + h);
+                        ctx.closePath(); ctx.fill();
+                        // 旋转推进器
+                        for(let i=0;i<4;i++){
+                            let angle = t + Math.PI/2*i;
+                            let px = x + w/2 + Math.cos(angle)*w*0.5;
+                            let py = y + h + Math.sin(angle)*w*0.5;
+                            ctx.save();
+                            ctx.globalAlpha = 0.7;
+                            ctx.fillStyle = '#0f0';
+                            ctx.beginPath();
+                            ctx.arc(px, py, 6+2*Math.sin(t+i), 0, 2*Math.PI);
+                            ctx.fill();
+                            ctx.restore();
+                        }
+                        // 流星尾
+                        ctx.save();
+                        ctx.globalAlpha = 0.5;
+                        ctx.strokeStyle = '#fff';
+                        ctx.lineWidth = 2;
+                        ctx.beginPath();
+                        ctx.moveTo(x + w/2, y + h);
+                        ctx.lineTo(x + w/2, y + h + 40 + 10*Math.sin(t));
+                        ctx.stroke();
+                        ctx.restore();
+                    } else if (level === 4) {
+                        // 机身+大光翼+流速环+闪电
+                        let grad = ctx.createLinearGradient(x, y, x + w, y + h);
+                        grad.addColorStop(0, '#fff'); grad.addColorStop(1, '#0f0');
+                        ctx.fillStyle = grad;
+                        ctx.beginPath();
+                        ctx.moveTo(x + w/2, y - 20);
+                        ctx.lineTo(x - 28, y + h);
+                        ctx.lineTo(x + w + 28, y + h);
+                        ctx.closePath(); ctx.fill();
+                        // 大光翼
+                        ctx.save();
+                        ctx.globalAlpha = 0.5+0.2*Math.abs(Math.sin(t));
+                        ctx.strokeStyle = '#0f0';
+                        ctx.lineWidth = 28;
+                        ctx.beginPath();
+                        ctx.moveTo(x + w/2, y + h*0.2);
+                        ctx.lineTo(x - 80, y + h + 30*Math.sin(t));
+                        ctx.moveTo(x + w/2, y + h*0.2);
+                        ctx.lineTo(x + w + 80, y + h + 30*Math.sin(t));
+                        ctx.stroke();
+                        ctx.restore();
+                        // 流速环
+                        ctx.save();
+                        ctx.globalAlpha = 0.3+0.2*Math.abs(Math.sin(t));
+                        ctx.strokeStyle = '#0f0';
+                        ctx.lineWidth = 10;
+                        ctx.beginPath();
+                        ctx.arc(x + w/2, y + h*0.7, w*1.0 + 16*Math.abs(Math.sin(t)), 0, 2*Math.PI);
+                        ctx.stroke();
+                        ctx.restore();
+                        // 闪电
+                        ctx.save();
+                        ctx.globalAlpha = 0.7;
+                        ctx.strokeStyle = '#fff';
+                        ctx.lineWidth = 2;
+                        for(let i=0;i<2;i++){
+                            let baseX = i===0 ? x-16 : x+w+16;
+                            ctx.beginPath();
+                            ctx.moveTo(x + w/2, y + h*0.5);
+                            for(let j=0;j<5;j++){
+                                let dx = baseX + (Math.random()-0.5)*12;
+                                let dy = y + h*0.5 + (j+1)*(h*0.1);
+                                ctx.lineTo(dx, dy);
+                            }
+                            ctx.stroke();
+                        }
+                        ctx.restore();
+                    } else if (level === 5) {
+                        // 机身+超大光翼+多重流速环+粒子爆发+光速尾
+                        let grad = ctx.createLinearGradient(x, y, x + w, y + h);
+                        grad.addColorStop(0, '#fff'); grad.addColorStop(1, '#0f0');
+                        ctx.fillStyle = grad;
+                        ctx.beginPath();
+                        ctx.moveTo(x + w/2, y - 32);
+                        ctx.lineTo(x - 48, y + h);
+                        ctx.lineTo(x + w + 48, y + h);
+                        ctx.closePath(); ctx.fill();
+                        // 超大光翼
+                        ctx.save();
+                        ctx.globalAlpha = 0.4+0.3*Math.abs(Math.sin(t));
+                        ctx.strokeStyle = '#0f0';
+                        ctx.lineWidth = 48;
+                        ctx.beginPath();
+                        ctx.moveTo(x + w/2, y + h*0.1);
+                        ctx.lineTo(x - 160, y + h + 80*Math.sin(t));
+                        ctx.moveTo(x + w/2, y + h*0.1);
+                        ctx.lineTo(x + w + 160, y + h + 80*Math.sin(t));
+                        ctx.stroke();
+                        ctx.restore();
+                        // 多重流速环
+                        for(let k=0;k<3;k++){
+                            ctx.save();
+                            ctx.globalAlpha = 0.2+0.2*k;
+                            ctx.strokeStyle = '#0f0';
+                            ctx.lineWidth = 14-3*k;
+                            ctx.beginPath();
+                            ctx.arc(x + w/2, y + h*0.7, w*1.3 + 24*k*Math.abs(Math.sin(t)), 0, 2*Math.PI);
+                            ctx.stroke();
+                            ctx.restore();
+                        }
+                        // 粒子爆发
+                        for(let i=0;i<20;i++){
+                            let angle = Math.PI*2*i/20 + t;
+                            let px = x + w/2 + Math.cos(angle)*(w*1.5+30*Math.abs(Math.sin(t)));
+                            let py = y + h*0.7 + Math.sin(angle)*(w*1.5+30*Math.abs(Math.sin(t)));
+                            ctx.save();
+                            ctx.globalAlpha = 0.7;
+                            ctx.fillStyle = '#fff';
+                            ctx.beginPath();
+                            ctx.arc(px, py, 7+2*Math.sin(t+i), 0, 2*Math.PI);
+                            ctx.fill();
+                            ctx.restore();
+                        }
+                        // 光速尾
+                        ctx.save();
+                        ctx.globalAlpha = 0.5;
+                        ctx.strokeStyle = '#0f0';
+                        ctx.lineWidth = 16;
+                        ctx.beginPath();
+                        ctx.moveTo(x + w/2, y + h);
+                        ctx.lineTo(x + w/2, y + h + 120 + 60*Math.abs(Math.sin(t)));
+                        ctx.stroke();
+                        ctx.restore();
+                    }
+                }
+            },
+            power: {
+                name: '火力型', color: '#f66', speed: 3, bulletColor: '#f00',
+                draw: function(ctx, x, y, w, h, level) {
+                    let t = Date.now()/250;
+                    if (level === 1) {
+                        // 红色厚重机身+金色能量条
+                        let grad = ctx.createLinearGradient(x, y, x + w, y + h);
+                        grad.addColorStop(0, '#f66'); grad.addColorStop(1, '#a00');
+                        ctx.fillStyle = grad;
+                        ctx.beginPath();
+                        ctx.moveTo(x + w/2, y-10);
+                        ctx.lineTo(x-12, y + h);
+                        ctx.lineTo(x + w+12, y + h);
+                        ctx.closePath(); ctx.fill();
+                        // 能量条
+                        ctx.strokeStyle = '#ffd700'; ctx.lineWidth = 4;
+                        ctx.beginPath(); ctx.moveTo(x + w/2, y); ctx.lineTo(x + w/2, y + h); ctx.stroke();
+                    } else if (level === 2) {
+                        // 机身+能量爆发+双能量条
+                        let grad = ctx.createLinearGradient(x, y, x + w, y + h);
+                        grad.addColorStop(0, '#f66'); grad.addColorStop(1, '#ffd700');
+                        ctx.fillStyle = grad;
+                        ctx.beginPath();
+                        ctx.moveTo(x + w/2, y-16);
+                        ctx.lineTo(x-18, y + h);
+                        ctx.lineTo(x + w+18, y + h);
+                        ctx.closePath(); ctx.fill();
+                        // 双能量条
+                        ctx.strokeStyle = '#ffd700'; ctx.lineWidth = 4;
+                        ctx.beginPath(); ctx.moveTo(x + w/2 - 8, y); ctx.lineTo(x + w/2 - 8, y + h); ctx.stroke();
+                        ctx.beginPath(); ctx.moveTo(x + w/2 + 8, y); ctx.lineTo(x + w/2 + 8, y + h); ctx.stroke();
+                        // 能量爆发
+                        ctx.save();
+                        ctx.globalAlpha = 0.5;
+                        ctx.fillStyle = '#ffd700';
+                        ctx.beginPath();
+                        ctx.arc(x + w/2, y + h*0.7, w*0.5 + 10*Math.abs(Math.sin(Date.now()/300)), 0, 2*Math.PI);
+                        ctx.fill();
+                        ctx.restore();
+                    } else if (level === 3) {
+                        // 机身+火焰环+粒子爆发+旋转能量环
+                        let grad = ctx.createLinearGradient(x, y, x + w, y + h);
+                        grad.addColorStop(0, '#fff'); grad.addColorStop(1, '#f00');
+                        ctx.fillStyle = grad;
+                        ctx.beginPath();
+                        ctx.moveTo(x + w/2, y-20);
+                        ctx.lineTo(x-24, y + h);
+                        ctx.lineTo(x + w+24, y + h);
+                        ctx.closePath(); ctx.fill();
+                        // 旋转能量环
+                        ctx.save();
+                        ctx.strokeStyle = '#ffd700';
+                        ctx.globalAlpha = 0.5;
+                        ctx.lineWidth = 5;
+                        ctx.beginPath();
+                        ctx.arc(x + w/2, y + h*0.6, w*0.9, t, t+Math.PI*1.5);
+                        ctx.stroke();
+                        ctx.restore();
+                        // 粒子爆发
+                        for(let i=0;i<10;i++){
+                            let angle = Math.PI*2*i/10 + t;
+                            let px = x + w/2 + Math.cos(angle)*w*0.8;
+                            let py = y + h*0.6 + Math.sin(angle)*w*0.8;
+                            ctx.save();
+                            ctx.globalAlpha = 0.7;
+                            ctx.fillStyle = '#ffd700';
+                            ctx.beginPath();
+                            ctx.arc(px, py, 4+2*Math.sin(t+i), 0, 2*Math.PI);
+                            ctx.fill();
+                            ctx.restore();
+                        }
+                        // 火焰环
+                        ctx.save();
+                        ctx.globalAlpha = 0.4;
+                        ctx.strokeStyle = '#f00';
+                        ctx.lineWidth = 8;
+                        ctx.beginPath();
+                        ctx.arc(x + w/2, y + h*0.7, w*0.7 + 8*Math.abs(Math.sin(t)), 0, 2*Math.PI);
+                        ctx.stroke();
+                        ctx.restore();
+                    } else if (level === 4) {
+                        // 机身+大光翼+爆炸环+火焰爆发
+                        let grad = ctx.createLinearGradient(x, y, x + w, y + h);
+                        grad.addColorStop(0, '#fff'); grad.addColorStop(1, '#f00');
+                        ctx.fillStyle = grad;
+                        ctx.beginPath();
+                        ctx.moveTo(x + w/2, y - 28);
+                        ctx.lineTo(x - 32, y + h);
+                        ctx.lineTo(x + w + 32, y + h);
+                        ctx.closePath(); ctx.fill();
+                        // 大光翼
+                        ctx.save();
+                        ctx.globalAlpha = 0.5+0.2*Math.abs(Math.sin(t));
+                        ctx.strokeStyle = '#ffd700';
+                        ctx.lineWidth = 32;
+                        ctx.beginPath();
+                        ctx.moveTo(x + w/2, y + h*0.2);
+                        ctx.lineTo(x - 100, y + h + 40*Math.sin(t));
+                        ctx.moveTo(x + w/2, y + h*0.2);
+                        ctx.lineTo(x + w + 100, y + h + 40*Math.sin(t));
+                        ctx.stroke();
+                        ctx.restore();
+                        // 爆炸环
+                        ctx.save();
+                        ctx.globalAlpha = 0.3+0.2*Math.abs(Math.sin(t));
+                        ctx.strokeStyle = '#ffd700';
+                        ctx.lineWidth = 12;
+                        ctx.beginPath();
+                        ctx.arc(x + w/2, y + h*0.7, w*1.1 + 20*Math.abs(Math.sin(t)), 0, 2*Math.PI);
+                        ctx.stroke();
+                        ctx.restore();
+                        // 火焰爆发
+                        for(let i=0;i<12;i++){
+                            let angle = Math.PI*2*i/12 + t;
+                            let px = x + w/2 + Math.cos(angle)*(w*1.2+18*Math.abs(Math.sin(t)));
+                            let py = y + h*0.7 + Math.sin(angle)*(w*1.2+18*Math.abs(Math.sin(t)));
+                            ctx.save();
+                            ctx.globalAlpha = 0.7;
+                            ctx.fillStyle = '#ffd700';
+                            ctx.beginPath();
+                            ctx.arc(px, py, 8+2*Math.sin(t+i), 0, 2*Math.PI);
+                            ctx.fill();
+                            ctx.restore();
+                        }
+                    } else if (level === 5) {
+                        // 机身+超大光翼+多重爆炸环+粒子爆发+火焰光束
+                        let grad = ctx.createLinearGradient(x, y, x + w, y + h);
+                        grad.addColorStop(0, '#fff'); grad.addColorStop(1, '#f00');
+                        ctx.fillStyle = grad;
+                        ctx.beginPath();
+                        ctx.moveTo(x + w/2, y - 40);
+                        ctx.lineTo(x - 60, y + h);
+                        ctx.lineTo(x + w + 60, y + h);
+                        ctx.closePath(); ctx.fill();
+                        // 超大光翼
+                        ctx.save();
+                        ctx.globalAlpha = 0.4+0.3*Math.abs(Math.sin(t));
+                        ctx.strokeStyle = '#ffd700';
+                        ctx.lineWidth = 56;
+                        ctx.beginPath();
+                        ctx.moveTo(x + w/2, y + h*0.1);
+                        ctx.lineTo(x - 180, y + h + 100*Math.sin(t));
+                        ctx.moveTo(x + w/2, y + h*0.1);
+                        ctx.lineTo(x + w + 180, y + h + 100*Math.sin(t));
+                        ctx.stroke();
+                        ctx.restore();
+                        // 多重爆炸环
+                        for(let k=0;k<3;k++){
+                            ctx.save();
+                            ctx.globalAlpha = 0.2+0.2*k;
+                            ctx.strokeStyle = '#ffd700';
+                            ctx.lineWidth = 16-3*k;
+                            ctx.beginPath();
+                            ctx.arc(x + w/2, y + h*0.7, w*1.5 + 30*k*Math.abs(Math.sin(t)), 0, 2*Math.PI);
+                            ctx.stroke();
+                            ctx.restore();
+                        }
+                        // 粒子爆发
+                        for(let i=0;i<24;i++){
+                            let angle = Math.PI*2*i/24 + t;
+                            let px = x + w/2 + Math.cos(angle)*(w*1.8+40*Math.abs(Math.sin(t)));
+                            let py = y + h*0.7 + Math.sin(angle)*(w*1.8+40*Math.abs(Math.sin(t)));
+                            ctx.save();
+                            ctx.globalAlpha = 0.7;
+                            ctx.fillStyle = '#ffd700';
+                            ctx.beginPath();
+                            ctx.arc(px, py, 10+2*Math.sin(t+i), 0, 2*Math.PI);
+                            ctx.fill();
+                            ctx.restore();
+                        }
+                        // 火焰光束
+                        ctx.save();
+                        ctx.globalAlpha = 0.5;
+                        ctx.strokeStyle = '#f00';
+                        ctx.lineWidth = 20;
+                        ctx.beginPath();
+                        ctx.moveTo(x + w/2, y + h);
+                        ctx.lineTo(x + w/2, y + h + 160 + 80*Math.abs(Math.sin(t)));
+                        ctx.stroke();
+                        ctx.restore();
+                    }
+                }
+            }
+        };
+
+        // 绘制选择界面飞机（level=1）
+        planeTypes.balance.draw(document.getElementById('planeBalance').getContext('2d'), 10, 10, 40, 60, 1);
+        planeTypes.speed.draw(document.getElementById('planeSpeed').getContext('2d'), 10, 10, 40, 60, 1);
+        planeTypes.power.draw(document.getElementById('planePower').getContext('2d'), 10, 10, 40, 60, 1);
+
+        loop();
+    </script>
+</body>
+</html>
