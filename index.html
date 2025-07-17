@@ -13,6 +13,11 @@
     <div id="score">分数: 0</div>
     <div id="lifeBar" style="color:#fff;text-align:center;font-size:18px;margin-top:2px;"></div>
     <canvas id="gameCanvas" width="400" height="600"></canvas>
+<div id="virtualKeys" style="display:flex;justify-content:center;gap:24px;margin-top:18px;">
+  <button id="leftBtn" style="width:70px;height:70px;font-size:32px;border-radius:50%;background:#222;color:#0ff;border:2px solid #0ff;">←</button>
+  <button id="fireBtn" style="width:70px;height:70px;font-size:32px;border-radius:50%;background:#222;color:#f0f;border:2px solid #f0f;">●</button>
+  <button id="rightBtn" style="width:70px;height:70px;font-size:32px;border-radius:50%;background:#222;color:#0ff;border:2px solid #0ff;">→</button>
+</div>
     <button id="restartBtn" style="display:none;position:fixed;left:50%;top:55%;transform:translate(-50%,-50%);z-index:20;font-size:22px;padding:12px 36px;border-radius:8px;background:#0ff;color:#222;border:none;box-shadow:0 0 16px #0ff;cursor:pointer;">重新开始</button>
     <audio id="bgm" src="bgm.mp3" loop></audio>
     <audio id="hitSound" src="hit.mp3"></audio>
@@ -205,6 +210,31 @@
             if (e.code === 'ArrowRight' || e.key === 'd' || e.key === 'D') rightPressed = false;
             if (e.code === 'Space') spacePressed = false;
         });
+// 虚拟按键支持（移动端/PC都可用）
+const leftBtn = document.getElementById('leftBtn');
+const rightBtn = document.getElementById('rightBtn');
+const fireBtn = document.getElementById('fireBtn');
+
+// 左键
+leftBtn.addEventListener('touchstart', function(e){ e.preventDefault(); leftPressed = true; });
+leftBtn.addEventListener('touchend', function(e){ e.preventDefault(); leftPressed = false; });
+leftBtn.addEventListener('mousedown', function(e){ leftPressed = true; });
+leftBtn.addEventListener('mouseup', function(e){ leftPressed = false; });
+leftBtn.addEventListener('mouseleave', function(e){ leftPressed = false; });
+
+// 右键
+rightBtn.addEventListener('touchstart', function(e){ e.preventDefault(); rightPressed = true; });
+rightBtn.addEventListener('touchend', function(e){ e.preventDefault(); rightPressed = false; });
+rightBtn.addEventListener('mousedown', function(e){ rightPressed = true; });
+rightBtn.addEventListener('mouseup', function(e){ rightPressed = false; });
+rightBtn.addEventListener('mouseleave', function(e){ rightPressed = false; });
+
+// 发射键
+fireBtn.addEventListener('touchstart', function(e){ e.preventDefault(); spacePressed = true; });
+fireBtn.addEventListener('touchend', function(e){ e.preventDefault(); spacePressed = false; });
+fireBtn.addEventListener('mousedown', function(e){ spacePressed = true; });
+fireBtn.addEventListener('mouseup', function(e){ spacePressed = false; });
+fireBtn.addEventListener('mouseleave', function(e){ spacePressed = false; });
 
 // 手机触摸控制：左右半屏控制左右移动，双指同时触摸发射子弹
 let touchLeft = false, touchRight = false;
