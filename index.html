@@ -11,11 +11,19 @@
 </head>
 <body>
     <div id="score">分数: 0</div>
+    <div id="lifeBar" style="color:#fff;text-align:center;font-size:18px;margin-top:2px;"></div>
     <canvas id="gameCanvas" width="400" height="600"></canvas>
     <button id="restartBtn" style="display:none;position:fixed;left:50%;top:55%;transform:translate(-50%,-50%);z-index:20;font-size:22px;padding:12px 36px;border-radius:8px;background:#0ff;color:#222;border:none;box-shadow:0 0 16px #0ff;cursor:pointer;">重新开始</button>
     <audio id="bgm" src="bgm.mp3" loop></audio>
     <audio id="hitSound" src="hit.mp3"></audio>
     <button id="muteBtn" style="position:fixed;right:24px;top:24px;z-index:30;font-size:16px;padding:6px 16px;border-radius:6px;background:#222;color:#fff;border:1px solid #0ff;">🔊</button>
+    <button id="taskBtn" style="position:fixed;right:24px;top:64px;z-index:30;font-size:16px;padding:6px 16px;border-radius:6px;background:#222;color:#fff;border:1px solid #0ff;">任务/成就</button>
+    <div id="taskPanel" style="display:none;position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);width:340px;max-width:90vw;background:rgba(0,0,0,0.95);color:#fff;z-index:100;padding:24px 18px 18px 18px;border-radius:12px;box-shadow:0 0 24px #0ff;">
+        <h3 style="margin:0 0 12px 0;text-align:center;">任务与成就</h3>
+        <div id="taskList"></div>
+        <div id="achieveList" style="margin-top:18px;"></div>
+        <button id="closeTaskPanel" style="margin:18px auto 0 auto;display:block;padding:6px 32px;font-size:16px;border-radius:6px;background:#0ff;color:#222;border:none;">关闭</button>
+    </div>
     <div id="planeSelect" style="position:fixed;left:0;top:0;width:100vw;height:100vh;background:rgba(0,0,0,0.85);z-index:10;display:flex;flex-direction:column;align-items:center;justify-content:center;">
         <h2 style='color:#fff;'>选择你的战机</h2>
         <div style="display:flex;gap:40px;">
@@ -37,11 +45,54 @@
         </div>
     </div>
     <script>
+        // 全局变量声明（只声明一次）
         const canvas = document.getElementById('gameCanvas');
         const ctx = canvas.getContext('2d');
         const scoreDiv = document.getElementById('score');
+        const lifeBar = document.getElementById('lifeBar');
+        const restartBtn = document.getElementById('restartBtn');
+        const bgm = document.getElementById('bgm');
+        const muteBtn = document.getElementById('muteBtn');
+        const hitSound = document.getElementById('hitSound');
 
-        // 星空背景数据
+        // 游戏状态
+        let gameStarted = false;
+        let gameOver = false;
+        let level = 1;
+        let score = 0;
+        let bullets = [];
+        let enemies = [];
+        let items = [];
+        let leftPressed = false;
+        let rightPressed = false;
+        let spacePressed = false;
+        let bulletCooldown = 0;
+        let showLevelTip = false;
+        let levelTipTimer = 0;
+ let killCount = [0,0,0,0]; // [enemy1, enemy2, enemy3, enemy4]
+        let equippedTitle = '';
+        const levelUpScore = [0, 200, 500, 900, 1400, 2000, 2700, 3500, 4400, 5400];
+
+        // 玩家飞机
+        const player = {
+            x: canvas.width / 2 - 20,
+            y: canvas.height - 60,
+            width: 40,
+            height: 60,
+            speed: 5,
+            savedSpeed: 5, // 新增，记录原始速度
+            level: 1,
+            type: 'balance',
+            bulletColor: '#fff',
+            lives: 3,
+            hp: 100,
+            maxHp: 100,
+            shield: 0,
+            powerUp: 0,
+            speedUp: 0 // 新增，加速剩余帧数
+        };
+
+        // 星星背景数据
         const STAR_NUM = 80;
         let stars = [];
         function initStars() {
@@ -86,34 +137,7 @@
             ctx.restore();
         }
 
-        // 玩家飞机
-        const player = {
-            x: canvas.width / 2 - 20,
-            y: canvas.height - 60,
-            width: 40,
-            height: 60,
-            speed: 5,
-            level: 1, // 1-5级
-            type: 'balance',
-            bulletColor: '#fff'
-        };
-
-        // 子弹
-        let bullets = [];
-        // 敌机
-        let enemies = [];
-        // 分数
-        let score = 0;
-        // 游戏状态
-        let gameOver = false;
-
         // 选择飞机逻辑
-        let gameStarted = false;
-        // 关卡相关
-        let level = 1;
-        let levelUpScore = [0, 200, 500, 900, 1400, 2000, 2700, 3500, 4400, 5400]; // 每关分数线
-        let showLevelTip = false;
-        let levelTipTimer = 0;
         function showLevel(levelNum) {
             showLevelTip = true;
             levelTipTimer = 60; // 显示60帧
@@ -125,68 +149,52 @@
             (() => { let img = new Image(); img.src = 'enemy3.png'; return img; })(),
             (() => { let img = new Image(); img.src = 'enemy4.png'; return img; })()
         ];
+        // 选飞机事件，彻底重置所有状态
         document.querySelectorAll('.plane-option').forEach(opt => {
             opt.onclick = function() {
                 const t = this.getAttribute('data-type');
                 player.type = t;
                 player.speed = planeTypes[t].speed;
+                player.savedSpeed = player.speed; // 同步原始速度
                 player.bulletColor = planeTypes[t].bulletColor;
-                document.getElementById('planeSelect').style.display = 'none';
+                player.lives = 3;
+                player.hp = player.maxHp = 100;
+                player.x = canvas.width / 2 - 20;
+                player.y = canvas.height - 60;
+                player.level = 1;
+                bullets = [];
+                enemies = [];
+                items = [];
+                score = 0;
+                level = 1;
+                showLevelTip = false;
+                levelTipTimer = 0;
                 gameStarted = true;
                 gameOver = false;
-                // 用户交互后主动播放BGM
+                player.speedUp = 0; // 重置加速
+                document.getElementById('planeSelect').style.display = 'none';
                 if (bgm.paused) {
                     bgm.currentTime = 0;
                     bgm.play().catch(()=>{});
                 }
-                // 进入第一关
-                level = 1;
                 showLevel(level);
-                loop();
+                killCount = [0,0,0,0]; // 重置击杀统计
             }
         });
 
-        // 重新开始按钮和BGM控制
-        const restartBtn = document.getElementById('restartBtn');
-        const bgm = document.getElementById('bgm');
-        const muteBtn = document.getElementById('muteBtn');
-        const hitSound = document.getElementById('hitSound');
-        muteBtn.onclick = function() {
-            if (bgm.muted) {
-                bgm.muted = false;
-                muteBtn.textContent = '🔊';
-            } else {
-                bgm.muted = true;
-                muteBtn.textContent = '🔇';
-            }
-        }
+        // 重新开始按钮
         restartBtn.onclick = function() {
-            // 重置所有游戏状态
-            player.x = canvas.width / 2 - 20;
-            player.y = canvas.height - 60;
-            player.level = 1;
-            score = 0;
-            bullets = [];
-            enemies = [];
-            gameOver = false;
+            // 只重置状态，显示飞机选择界面
             gameStarted = false;
+            gameOver = false;
             restartBtn.style.display = 'none';
-            initStars();
-            // 重新开始时回到第一关
-            level = 1;
-            showLevel(level);
-            if (bgm.paused) {
-                bgm.currentTime = 0;
-                bgm.play().catch(()=>{});
-            }
-            // 显示飞机选择界面
             document.getElementById('planeSelect').style.display = 'flex';
+            initStars();
+            player.speedUp = 0; // 重置加速
+            killCount = [0,0,0,0]; // 重置击杀统计
         }
 
-        // 监听键盘
-        let leftPressed = false;
-        let rightPressed = false;
-        let spacePressed = false;
+// 监听键盘
         document.addEventListener('keydown', e => {
             if (e.code === 'ArrowLeft' || e.key === 'a' || e.key === 'A') leftPressed = true;
             if (e.code === 'ArrowRight' || e.key === 'd' || e.key === 'D') rightPressed = true;
@@ -199,7 +207,6 @@
         });
 
         // 发射子弹冷却
-        let bulletCooldown = 0;
 
         // 升级为五级，分数判定
         function getLevelByScore(score) {
@@ -211,18 +218,14 @@
         }
 
         function drawPlayer() {
-            // 根据类型和等级绘制不同外观
             const t = player.type;
             if (t && planeTypes[t]) {
                 planeTypes[t].draw(ctx, player.x, player.y, player.width, player.height, player.level);
             } else {
+                ctx.save();
                 ctx.fillStyle = '#0ff';
-                ctx.beginPath();
-                ctx.moveTo(player.x + player.width / 2, player.y);
-                ctx.lineTo(player.x, player.y + player.height);
-                ctx.lineTo(player.x + player.width, player.y + player.height);
-                ctx.closePath();
-                ctx.fill();
+                ctx.fillRect(player.x, player.y, player.width, player.height);
+                ctx.restore();
             }
         }
 
@@ -274,26 +277,262 @@
             });
         }
 
+        // 道具类型与图片（请将gif动图放在img目录下）
+        const itemTypes = [
+            {type: 'heal', img: 'img/heart.gif'},      // 加血
+            {type: 'power', img: 'img/powerup.gif'},   // 火力提升
+            {type: 'shield', img: 'img/shield.gif'},   // 护盾
+            {type: 'speed', img: 'img/speedup.png'}    // 加速（png）
+        ];
+        // 预加载道具图片
+        const itemImages = {
+            heal: new Image(),
+            power: new Image(),
+            shield: new Image(),
+            speed: new Image()
+        };
+        itemImages.heal.src = 'img/heart.gif';
+        itemImages.power.src = 'img/powerup.gif';
+        itemImages.shield.src = 'img/shield.gif';
+        itemImages.speed.src = 'img/speedup.png';
+
+        // Boss击杀特效数据
+        let bossExplosions = [];
+        // 只允许Boss掉落道具
+        function enemyDropItem(enemy) {
+            if (enemy.isBoss && Math.random() < 0.8) { // Boss高概率掉落
+                const item = itemTypes[Math.floor(Math.random()*itemTypes.length)];
+                items.push({
+                    x: enemy.x + enemy.width/2 - 16,
+                    y: enemy.y + enemy.height/2 - 16,
+                    width: 32,
+                    height: 32,
+                    type: item.type,
+                    img: item.img,
+                    speed: 2
+                });
+            }
+        }
+        // Boss击杀特效生成
+        function spawnBossExplosion(x, y) {
+            bossExplosions.push({
+                x, y, frame: 0, maxFrame: 40,
+                particles: [
+                    // 柔和蓝色粒子
+                    ...Array.from({length: 28}, () => ({
+                        type: 'normal',
+                        angle: Math.random()*2*Math.PI,
+                        radius: 0,
+                        speed: 3+Math.random()*5,
+                        color: 'rgba(120,180,255,0.85)',
+                        size: 12+Math.random()*6
+                    })),
+                    // 柔和紫色粒子
+                    ...Array.from({length: 10}, () => ({
+                        type: 'normal',
+                        angle: Math.random()*2*Math.PI,
+                        radius: 0,
+                        speed: 2+Math.random()*4,
+                        color: 'rgba(180,140,255,0.8)',
+                        size: 10+Math.random()*5
+                    })),
+                    // 白色星星粒子
+                    ...Array.from({length: 8}, () => ({
+                        type: 'star',
+                        angle: Math.random()*2*Math.PI,
+                        radius: 0,
+                        speed: 2+Math.random()*3,
+                        color: 'rgba(255,255,255,0.9)',
+                        size: 14+Math.random()*6
+                    })),
+                    // 淡蓝色闪电粒子
+                    ...Array.from({length: 4}, () => ({
+                        type: 'lightning',
+                        angle: Math.random()*2*Math.PI,
+                        radius: 0,
+                        speed: 3+Math.random()*3,
+                        color: 'rgba(120,220,255,0.7)',
+                        size: 18
+                    }))
+                ],
+                rings: [
+                    {r: 0, maxR: 60, alpha: 0.5, color: 'rgba(120,180,255,0.35)'},
+                    {r: 0, maxR: 36, alpha: 0.3, color: 'rgba(180,140,255,0.22)'}
+                ],
+                flash: true // 爆炸瞬间闪光
+            });
+        }
+        // 绘制Boss击杀特效
+        function drawBossExplosions() {
+            bossExplosions.forEach(expl => {
+                // 柔和能量波纹
+                expl.rings.forEach(ring => {
+                    ctx.save();
+                    ctx.globalAlpha = ring.alpha * (1 - ring.r / ring.maxR);
+                    ctx.strokeStyle = ring.color;
+                    ctx.lineWidth = 8;
+                    ctx.beginPath();
+                    ctx.arc(expl.x, expl.y, ring.r, 0, 2*Math.PI);
+                    ctx.stroke();
+                    ctx.restore();
+                    // 爆炸光圈范围内的敌人被炸死
+                    if (ring.r > 30 && ring.r <= ring.maxR) {
+                        for (let i = enemies.length - 1; i >= 0; i--) {
+                            const enemy = enemies[i];
+                            const ex = enemy.x + enemy.width/2;
+                            const ey = enemy.y + enemy.height/2;
+                            const dist = Math.sqrt((ex - expl.x) * (ex - expl.x) + (ey - expl.y) * (ey - expl.y));
+                            if (dist < ring.r + enemy.width/2) {
+                                if(enemy.isBoss) {
+                                    spawnBossExplosion(ex, ey);
+                                } else {
+                                    spawnEnemyExplosion(ex, ey);
+                                }
+                                enemyDropItem(enemy);
+                                enemies.splice(i, 1);
+                                score += 10;
+                                if (hitSound) { hitSound.currentTime = 0; hitSound.play().catch(()=>{}); }
+                            }
+                        }
+                    }
+                });
+                // 粒子
+                expl.particles.forEach(p => {
+                    const px = expl.x + Math.cos(p.angle)*p.radius;
+                    const py = expl.y + Math.sin(p.angle)*p.radius;
+                    ctx.save();
+                    ctx.globalAlpha = 1 - expl.frame/expl.maxFrame;
+                    if (p.type === 'normal') {
+                        ctx.shadowColor = p.color;
+                        ctx.shadowBlur = 16;
+                        ctx.fillStyle = p.color;
+                        ctx.beginPath();
+                        ctx.arc(px, py, p.size, 0, 2*Math.PI);
+                        ctx.fill();
+                    } else if (p.type === 'star') {
+                        ctx.fillStyle = p.color;
+                        drawStar(ctx, px, py, p.size, 5, 0.5);
+                    } else if (p.type === 'lightning') {
+                        ctx.strokeStyle = p.color;
+                        ctx.lineWidth = 2;
+                        ctx.beginPath();
+                        ctx.moveTo(px, py);
+                        for(let i=0;i<5;i++){
+                            let dx = px + (Math.random()-0.5)*p.size;
+                            let dy = py + (Math.random()-0.5)*p.size;
+                            ctx.lineTo(dx, dy);
+                        }
+                        ctx.stroke();
+                    }
+                    ctx.restore();
+                });
+                // 爆炸闪光
+                if (expl.flash && expl.frame < 6) {
+                    ctx.save();
+                    ctx.globalAlpha = 0.10 * (6 - expl.frame);
+                    ctx.fillStyle = '#eaf6ff';
+                    ctx.fillRect(0, 0, canvas.width, canvas.height);
+                    ctx.restore();
+                }
+            });
+        }
+        // 画五角星
+        function drawStar(ctx, x, y, r, points, inset) {
+            ctx.save();
+            ctx.beginPath();
+            ctx.moveTo(x, y - r);
+            for (let i = 0; i < points * 2; i++) {
+                let angle = Math.PI / points * i;
+                let len = i % 2 === 0 ? r : r * inset;
+                ctx.lineTo(x + Math.sin(angle) * len, y - Math.cos(angle) * len);
+            }
+            ctx.closePath();
+            ctx.fill();
+            ctx.restore();
+        }
+        // 更新Boss击杀特效
+        function updateBossExplosions() {
+            bossExplosions.forEach(expl => {
+                expl.frame++;
+                expl.particles.forEach(p => {
+                    p.radius += p.speed;
+                    if (p.type === 'normal' || p.type === 'star') {
+                        p.size *= 0.97;
+                    }
+                });
+                expl.rings.forEach(ring => {
+                    ring.r += 6;
+                });
+                if (expl.frame > 6) expl.flash = false;
+            });
+            bossExplosions = bossExplosions.filter(expl => expl.frame < expl.maxFrame);
+        }
+
+        // 普通敌人击杀特效（自定义入口）
+        let enemyExplosions = [];
+        function spawnEnemyExplosion(x, y) {
+            enemyExplosions.push({
+                x, y, frame: 0, maxFrame: 18, particles: Array.from({length: 12}, () => ({
+                    angle: Math.random() * 2 * Math.PI,
+                    radius: 0,
+                    speed: 1 + Math.random() * 2,
+                    color: 'orange' // 你可以自定义颜色/渐变/图片
+                }))
+            });
+        }
+        function updateEnemyExplosions() {
+            enemyExplosions.forEach(expl => {
+                expl.frame++;
+                expl.particles.forEach(p => { p.radius += p.speed; });
+            });
+            enemyExplosions = enemyExplosions.filter(expl => expl.frame < expl.maxFrame);
+        }
+        function drawEnemyExplosions() {
+            enemyExplosions.forEach(expl => {
+                expl.particles.forEach(p => {
+                    const px = expl.x + Math.cos(p.angle) * p.radius;
+                    const py = expl.y + Math.sin(p.angle) * p.radius;
+                    ctx.save();
+                    ctx.globalAlpha = 1 - expl.frame / expl.maxFrame;
+                    ctx.fillStyle = p.color;
+                    ctx.beginPath();
+                    ctx.arc(px, py, 4, 0, 2 * Math.PI);
+                    ctx.fill();
+                    ctx.restore();
+                });
+            });
+        }
+
+        function updateItems() {
+            items.forEach(item => item.y += item.speed);
+            items = items.filter(item => item.y < canvas.height);
+        }
+        // 绘制道具用gif图片，带容错处理
+        function drawItems() {
+            items.forEach(item => {
+                let image = itemImages[item.type];
+                if (image && image.complete && image.naturalWidth > 0) {
+                    ctx.drawImage(image, item.x, item.y, item.width, item.height);
+                }
+            });
+        }
+
         function update() {
-            if (!gameStarted) return;
-            if (gameOver) return;
+            if (!gameStarted || gameOver) return;
             // 升级判定（五级）
             player.level = getLevelByScore(score);
             // 关卡判定
             if (level < levelUpScore.length && score >= levelUpScore[level]) {
                 level++;
                 showLevel(level);
-                // 关卡切换时尝试播放BGM
                 if (bgm.paused) {
                     bgm.currentTime = 0;
                     bgm.play().catch(()=>{});
                 }
             }
-
             // 玩家移动
             if (leftPressed && player.x > 0) player.x -= player.speed;
             if (rightPressed && player.x < canvas.width - player.width) player.x += player.speed;
-
             // 发射子弹
             if (spacePressed && bulletCooldown <= 0) {
                 if (player.level === 1) {
@@ -471,7 +710,43 @@
             // 更新敌机
             enemies.forEach(enemy => enemy.y += enemy.speed);
             enemies = enemies.filter(enemy => enemy.y < canvas.height);
-
+            // 更新道具
+            updateItems();
+            updateBossExplosions();
+            updateEnemyExplosions(); // 更新普通敌人特效
+            // 玩家吃到道具
+            items.forEach((item, idx) => {
+                if (
+                    player.x < item.x + item.width &&
+                    player.x + player.width > item.x &&
+                    player.y < item.y + item.height &&
+                    player.y + player.height > item.y
+                ) {
+                    if(item.type==='heal') {
+                        player.hp = Math.min(player.maxHp, player.hp+40);
+                    } else if(item.type==='power') {
+                        player.powerUp = 600; // 10秒火力提升
+                    } else if(item.type==='shield') {
+                        player.shield = 600; // 10秒无敌
+                    } else if(item.type==='speed') {
+                        if (player.speedUp <= 0) {
+                            player.savedSpeed = player.speed;
+                            player.speed += 2;
+                        }
+                        player.speedUp = 600; // 10秒
+                    }
+                    items.splice(idx, 1);
+                }
+            });
+            // 道具效果倒计时
+            if(player.powerUp>0) player.powerUp--;
+            if(player.shield>0) player.shield--;
+            if(player.speedUp>0) {
+                player.speedUp--;
+                if(player.speedUp===0) {
+                    player.speed = player.savedSpeed;
+                }
+            }
             // 碰撞检测
             bullets.forEach((bullet, bIdx) => {
                 enemies.forEach((enemy, eIdx) => {
@@ -481,28 +756,55 @@
                         bullet.y < enemy.y + enemy.height &&
                         bullet.y + bullet.height > enemy.y
                     ) {
-                        // 子弹击中敌机
                         bullets.splice(bIdx, 1);
+                        if(enemy.isBoss) {
+                            spawnBossExplosion(enemy.x+enemy.width/2, enemy.y+enemy.height/2);
+                        } else {
+                            spawnEnemyExplosion(enemy.x+enemy.width/2, enemy.y+enemy.height/2);
+                        }
+                        // 新增：统计击杀类型
+                        let typeIdx = 0;
+                        if(enemy.img && enemy.img.src){
+                            if(enemy.img.src.indexOf('enemy1')!==-1) typeIdx=0;
+                            else if(enemy.img.src.indexOf('enemy2')!==-1) typeIdx=1;
+                            else if(enemy.img.src.indexOf('enemy3')!==-1) typeIdx=2;
+                            else if(enemy.img.src.indexOf('enemy4')!==-1) typeIdx=3;
+                        }
+                        killCount[typeIdx]++;
+                        enemyDropItem(enemy);
                         enemies.splice(eIdx, 1);
                         score += 10;
-                        // 播放击中音效
-                        if (hitSound) {
-                            hitSound.currentTime = 0;
-                            hitSound.play().catch(()=>{});
-                        }
+                        if (hitSound) { hitSound.currentTime = 0; hitSound.play().catch(()=>{}); }
                     }
                 });
             });
-
             // 玩家与敌机碰撞
-            enemies.forEach(enemy => {
+            enemies.forEach((enemy, eIdx) => {
                 if (
                     player.x < enemy.x + enemy.width &&
                     player.x + player.width > enemy.x &&
                     player.y < enemy.y + enemy.height &&
                     player.y + player.height > enemy.y
                 ) {
-                    gameOver = true;
+                    if(player.shield>0) {
+                        // 有护盾无敌
+                        enemies.splice(eIdx,1);
+                    } else {
+                        player.hp -= 50;
+                        enemies.splice(eIdx,1);
+                        if(player.hp<=0) {
+                            player.lives--;
+                            if(player.lives>0) {
+                                player.hp = player.maxHp;
+                                player.x = canvas.width / 2 - 20;
+                                player.y = canvas.height - 60;
+                            } else {
+                                gameOver = true;
+                                // 新增：判定特殊成就
+                                checkSpecialAchievements();
+                            }
+                        }
+                    }
                 }
             });
         }
@@ -512,6 +814,9 @@
             drawPlayer();
             drawBullets();
             drawEnemies();
+            drawItems();
+            drawBossExplosions(); // Boss特效
+            drawEnemyExplosions(); // 普通敌人特效
             // 关卡提示
             if (showLevelTip && levelTipTimer > 0) {
                 ctx.save();
@@ -535,11 +840,15 @@
             }
         }
 
-        function loop() {
-            update();
-            draw();
-            scoreDiv.textContent = '分数: ' + score;
-            if (!gameOver) requestAnimationFrame(loop);
+        // 生命显示
+        function updateLifeBar() {
+            let hearts = '';
+            for(let i=0;i<player.lives;i++) hearts+='❤';
+            lifeBar.innerHTML = `生命：${hearts} HP:${player.hp}`
+                + (player.shield>0?' <span style="color:#0ff">[护盾]</span>':'')
+                + (player.powerUp>0?' <span style="color:#f0f">[火力UP]</span>':'')
+                + (player.speedUp>0?' <span style="color:#0cf">[加速]</span>':'')
+                + (equippedTitle?` <span style='color:#ffd700;font-weight:bold;'>[${equippedTitle}]</span>`:'');
         }
 
         // 飞机类型数据（五级特效）
@@ -1124,7 +1433,110 @@
         planeTypes.speed.draw(document.getElementById('planeSpeed').getContext('2d'), 10, 10, 40, 60, 1);
         planeTypes.power.draw(document.getElementById('planePower').getContext('2d'), 10, 10, 40, 60, 1);
 
+        // =====================
+        // 主循环定义和调用放在最后
+        function loop() {
+            update();
+            draw();
+            scoreDiv.textContent = '分数: ' + score;
+            updateLifeBar();
+            requestAnimationFrame(loop);
+        }
+        // 页面加载时只调用一次
         loop();
+
+        // 任务与成就数据和相关变量（提前声明）
+        const tasks = [
+            { id: 'kill10', desc: '累计击毁10架敌机', type: 'kill', target: 10, done: false },
+            { id: 'score1000', desc: '单局得分达到1000', type: 'score', target: 1000, done: false },
+            { id: 'pickup5', desc: '累计吃到5个道具', type: 'pickup', target: 5, done: false }
+        ];
+        const achievements = [
+            { id: 'firstBoss', desc: '首次击败Boss', done: false },
+            { id: 'score10000', desc: '累计得分达到10000', done: false },
+            { id: 'beetleKiller', desc: '单局只消灭10个甲虫', done: false, title: '甲虫杀手' },
+            { id: 'stinkKiller', desc: '单局只消灭10个野臭', done: false, title: '野臭杀手' },
+            { id: 'zeldaKing', desc: '单局只消灭10个林克陈子', done: false, title: '塞尔达之王' },
+            { id: 'noPorcupine', desc: '单局至少消灭100个豪猪', done: false, title: '不吃豪猪' }
+        ];
+        let taskProgress = { kill: 0, score: 0, pickup: 0 };
+        let totalScore = 0;
+       
+        // 任务面板UI逻辑
+        const taskBtn = document.getElementById('taskBtn');
+        const taskPanel = document.getElementById('taskPanel');
+        const closeTaskPanel = document.getElementById('closeTaskPanel');
+        const taskList = document.getElementById('taskList');
+        const achieveList = document.getElementById('achieveList');
+// 任务/成就按钮点击，显示任务面板
+taskBtn.onclick = function() {
+    renderTaskPanel(); // 渲染内容
+    taskPanel.style.display = 'block'; // 显示面板
+};
+// 关闭按钮点击，隐藏任务面板
+closeTaskPanel.onclick = function() {
+    taskPanel.style.display = 'none';
+};
+// 静音按钮点击，切换静音状态
+muteBtn.onclick = function() {
+    if (bgm.muted) {
+        bgm.muted = false;
+        muteBtn.textContent = '🔊';
+    } else {
+        bgm.muted = true;
+        muteBtn.textContent = '🔇';
+    }
+};        
+
+        function renderTaskPanel() {
+            // 任务
+            taskList.innerHTML = '<b>任务</b><ul style="padding-left:18px;">' + tasks.map(t => `<li style='color:${t.done?'#0f0':'#fff'};'>${t.desc} ${t.done?'✅':''}</li>`).join('') + '</ul>';
+            // 成就
+            achieveList.innerHTML = '<b>成就/称号</b><ul style="padding-left:18px;">' + achievements.map((a,idx) => {
+                let btn = '';
+                if(a.title && a.done) {
+                    btn = `<button onclick="window.equipTitle('${a.title}')" style='margin-left:8px;padding:2px 10px;font-size:13px;border-radius:5px;background:${equippedTitle===a.title?'#ffd700':'#0ff'};color:#222;border:none;cursor:pointer;'>${equippedTitle===a.title?'已佩戴':'佩戴'}</button>`;
+                }
+                return `<li style='color:${a.done?'#ffd700':'#fff'};'>${a.desc}${a.title?` <span style='color:#0ff'>[${a.title}]</span>`:''} ${a.done?'🏆':''} ${btn}</li>`;
+            }).join('') + '</ul>';
+        }
+        // 佩戴称号函数
+        window.equipTitle = function(title) {
+            equippedTitle = title;
+            renderTaskPanel();
+        }
+        // 判定特殊成就函数
+        function checkSpecialAchievements() {
+            // 甲虫杀手：只消灭10个甲虫（enemy3），其他类型为0
+            if(killCount[2]===10 && killCount[0]===0 && killCount[1]===0 && killCount[3]===0) {
+                let a = achievements.find(a=>a.id==='beetleKiller');
+                if(a && !a.done) { a.done=true; showAchieveToast(a.title); }
+            }
+            // 野臭杀手：只消灭10个野臭（enemy4），其他类型为0
+            if(killCount[3]===10 && killCount[0]===0 && killCount[1]===0 && killCount[2]===0) {
+                let a = achievements.find(a=>a.id==='stinkKiller');
+                if(a && !a.done) { a.done=true; showAchieveToast(a.title); }
+            }
+            // 塞尔达之王：只消灭10个林克陈子（enemy1），其他类型为0
+            if(killCount[0]===10 && killCount[1]===0 && killCount[2]===0 && killCount[3]===0) {
+                let a = achievements.find(a=>a.id==='zeldaKing');
+                if(a && !a.done) { a.done=true; showAchieveToast(a.title); }
+            }
+            // 不吃豪猪：至少消灭100个豪猪（enemy2）
+            if(killCount[1]>=100) {
+                let a = achievements.find(a=>a.id==='noPorcupine');
+                if(a && !a.done) { a.done=true; showAchieveToast(a.title); }
+            }
+            renderTaskPanel();
+        }
+        // 弹出称号解锁提示
+        function showAchieveToast(title) {
+            let toast = document.createElement('div');
+            toast.textContent = `获得称号：${title}`;
+            toast.style.cssText = 'position:fixed;left:50%;top:30%;transform:translate(-50%,-50%);background:#222;color:#ffd700;font-size:22px;padding:18px 36px;border-radius:10px;z-index:200;box-shadow:0 0 24px #ffd700;text-align:center;';
+            document.body.appendChild(toast);
+            setTimeout(()=>{toast.remove();}, 2200);
+        }
     </script>
 </body>
 </html>
