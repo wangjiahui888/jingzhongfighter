@@ -206,7 +206,47 @@
             if (e.code === 'Space') spacePressed = false;
         });
 
-        // 发射子弹冷却
+// 手机触摸控制：左右半屏控制左右移动，双指同时触摸发射子弹
+let touchLeft = false, touchRight = false;
+
+canvas.addEventListener('touchstart', function(e){
+    if(e.touches.length === 1){
+        let x = e.touches[0].clientX;
+        if(x < window.innerWidth/2) {
+            leftPressed = true;
+            rightPressed = false;
+        } else {
+            rightPressed = true;
+            leftPressed = false;
+        }
+    }
+    // 双指同时触摸，发射子弹
+    if(e.touches.length === 2){
+        spacePressed = true;
+    }
+});
+
+canvas.addEventListener('touchend', function(e){
+    // 没有手指时全部松开
+    if(e.touches.length === 0){
+        leftPressed = false;
+        rightPressed = false;
+        spacePressed = false;
+    }
+    // 只剩一个手指时，判断位置
+    if(e.touches.length === 1){
+        let x = e.touches[0].clientX;
+        if(x < window.innerWidth/2) {
+            leftPressed = true;
+            rightPressed = false;
+        } else {
+            rightPressed = true;
+            leftPressed = false;
+        }
+        spacePressed = false;
+    }
+});        
+// 发射子弹冷却
 
         // 升级为五级，分数判定
         function getLevelByScore(score) {
